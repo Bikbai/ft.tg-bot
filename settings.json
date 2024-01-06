@@ -1,0 +1,42 @@
+{
+  "instance": "ztfs-2017:8080/tfs",
+  "collection": "Fintech",
+  "tfs_project": "MIR",
+  "team": "FCOD-M",
+  "query_id": "f33d826e-59cf-4c2c-b6c5-e0a761f29dfa",
+  "projects": [
+    {
+      "project_code": "ФЦОД-М",
+      "ParentWorkItemId": "42406",
+      "/fields/": {
+        "System.AssignedTo": "Карпов Егор Михайлович <FINTECH\\karpov>",
+        "System.Tags": "tg-support",
+        "System.IterationPath": "Mir\\999-Future",
+        "System.AreaPath": "Mir\\ФЦОД-М",
+        "Microsoft.VSTS.Common.Severity": "2 - High"
+      }
+    },
+    {
+      "project_code": "ПТК ПК",
+      "ParentWorkItemId": "35769",
+      "/fields/": {
+        "System.AssignedTo": "Скоселев Денис Андреевич <FINTECH\\dskoselev>",
+        "System.Tags": "tg-support",
+        "System.IterationPath": "Mir\\999-Future",
+        "System.AreaPath": "Mir\\2023_PTK_Support\\23.SkoselevTeam",
+        "Microsoft.VSTS.Common.Severity": "2 - High"
+      }
+    },
+    {
+      "project_code": "ФЦОД ПС",
+      "ParentWorkItemId": "35751",
+      "/fields/": {
+        "System.AssignedTo": "Скоселев Денис Андреевич <FINTECH\\dskoselev>",
+        "System.Tags": "tg-support",
+        "System.IterationPath": "Mir\\999-Future",
+        "System.AreaPath": "Mir\\2023_PTK_Support\\23.SkoselevTeam",
+        "Microsoft.VSTS.Common.Severity": "2 - High"
+      }
+    }
+  ]
+}
