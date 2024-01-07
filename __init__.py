@@ -1,4 +1,4 @@
-import main as bot
+from src import tfs_bot as bot
 
 
 def main():

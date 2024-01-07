@@ -1,6 +1,8 @@
+import importlib.resources
 import json
 import logging
 import collections
+import os
 import traceback
 from logging.handlers import RotatingFileHandler
 from pydoc import html
@@ -9,12 +11,12 @@ from typing import Dict
 import requests
 import telegram
 from telegram import ReplyKeyboardRemove, Update, InlineKeyboardButton, \
-    InlineKeyboardMarkup, helpers, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo, PhotoSize
+    InlineKeyboardMarkup, helpers, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackContext, \
     CallbackQueryHandler, ConversationHandler, DictPersistence
 
-import tfs_utility
+import src.tfs_utility as tfs_utility
 
 webAppUrl = "https://bikbai.github.io/TestWebApp/"
 BUG_COMMAND = 'Создать ошибку'
@@ -27,10 +29,26 @@ sessionStore.setdefault('-1', '-1')
 STAGE1_HANDLER, ATTACHMENT_ENTRY, WI_NUMBER_ENTRY = range(3)
 
 # Enable logging
+
+pdata = f'{os.environ["programdata"]}/tfs_bot'
+
+# проверяем рабочий каталог
+if not os.path.exists(pdata):
+    os.mkdir(pdata)
+# копируем стандартный конфиг
+# да, если пустой файл - будет ошибка, извинити
+if not os.path.exists(f"{pdata}/settings.json"):
+    with open(f"{pdata}/settings.json", "w") as file:
+        file.write(importlib.resources.open_text(__package__, 'settings.json', encoding="CP1251").read())
+
+# проверяем каталог с логами
+if not os.path.exists(f'{pdata}/logs'):
+    os.mkdir(f"{pdata}/logs")
+
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(module)s - %(funcName)20s %(message)s",
     level=logging.INFO,
-    handlers=[RotatingFileHandler('./bot_log.log', maxBytes=100000, backupCount=10)],
+    handlers=[RotatingFileHandler(f'{pdata}/logs/bot_log.log', maxBytes=100000, backupCount=10)],
 )
 
 # set higher logging level for httpx to avoid all GET and POST requests being logged
@@ -38,7 +56,12 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-tfs = tfs_utility.TfsManipulator()
+# Грузим настройки
+
+with open(f"{pdata}/settings.json", "r") as file:
+    settings = json.load(file)
+
+tfs = tfs_utility.TfsManipulator(settings)
 
 
 def build_cancel_keyboard():
@@ -196,13 +219,13 @@ async def attachment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ATTACHMENT_ENTRY
     try:
         retcode = tfs.make_wi_attach(bug_id, buf, filename=f'{filename}')
-        if retcode == 200:
+        if retcode in (200, 201):
             text = f'Всё успешно.\nДля завершения нажмите "{FINISH_COMMAND}", либо добавьте еще картинок =)'
             await update.message.reply_text(text)
             logger.info(f"Успешно добавлен аттач к {bug_id}, chat_id = {update.message.chat_id}")
             return ATTACHMENT_ENTRY
         else:
-            text = f'При вызове TFS API произошла ошибка, код ошибки {retcode}'
+            text = f'При вызове TFS API произошла ошибка, HTTP status code: {retcode}'
             logger.error(f'{text}, chat_id =  {update.message.chat_id}')
             await update.message.reply_text(text)
             return ConversationHandler.END
@@ -315,12 +338,23 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def send_to_webhook(tg_channel, tg_username, message):
-    url = 'https://discord.com/api/webhooks/1192949189626318960/' \
-          'r1_FA_hLN6h675sMzqXjwCcCEj99akXSpG4uj9fwkxAoKsaQaMrAuH-AkklbwclaQbZt'
+    channels = settings["forwarding"]
+    if tg_channel not in channels:
+        logger.info(f"Проигнорировано сообщение из чата {tg_channel}")
+        return
 
-    headers = {
-        "content-type": "application/json"
-    }
+    if channels[tg_channel] != "":
+        thread = f"?thread_id={channels[tg_channel]}"
+    else:
+        thread = ""
+
+    webhook_id = channels["webhook_id"]
+    token = channels["webhook_token"]
+    if webhook_id == "" or token == "":
+        logger.error("Нет настроек форвардинга!")
+        return
+
+    url = f'https://discord.com/api/webhooks/{webhook_id}/{token}{thread}'
 
     data = {
         "username": "Telegram bot",
@@ -330,11 +364,11 @@ async def send_to_webhook(tg_channel, tg_username, message):
         }]
     }
 
-    requests.post(url, headers=headers, json=data)
+    requests.post(url, headers= {"content-type": "application/json"}, json=data)
+    logger.info(f"Сообщение из чата {tg_channel} перенаправлено в DS")
 
 
 async def discord_redirect(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Redirecting to webhook")
     await send_to_webhook(
         update.message.chat.title,
         f"{update.effective_user.full_name}({update.effective_user.name})",
@@ -392,7 +426,5 @@ def main() -> None:
 
     application.add_error_handler(error_handler)
 
-
-if __name__ == "__main__":
-    main()
+    print("Started.")
 

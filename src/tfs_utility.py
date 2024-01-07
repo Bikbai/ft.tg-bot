@@ -1,8 +1,10 @@
 import json
-from array import array
 
 import requests
 import requests_kerberos
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 class Patch:
@@ -64,19 +66,16 @@ class Patch:
 
 class TfsManipulator:
 
-    def __init__(self):
-        with open('settings.json', 'r') as openfile:
-            # Reading from json file
-            json_settings = json.load(openfile)
-
-        self.instance = json_settings["instance"]
-        self.collection = json_settings["collection"]
-        self.project = json_settings["tfs_project"]
-        self.team = json_settings["team"]
-        self.query_id = json_settings["query_id"]
+    def __init__(self, settings):
+        logger.info(f"Parsing settings: {settings}")
+        self.instance = settings["instance"]
+        self.collection = settings["collection"]
+        self.project = settings["tfs_project"]
+        self.team = settings["team"]
+        self.query_id = settings["query_id"]
 
         """ СПИСОК настроек WI для проекта """
-        self.settings = json_settings["projects"]
+        self.settings = settings["projects"]
 
     def create_wi(self, project_string, title: str, descr: str, info: str, request_number: str = "") -> int:
         """ Метод создаёт WI в TFS и возвращает его номер. В случае ошибки возвращает -1"""
@@ -147,8 +146,10 @@ class TfsManipulator:
                           },
                           auth=requests_kerberos.HTTPKerberosAuth())
 
-        if resp.status_code != 200:
+        if resp.status_code not in (200, 201):
             return resp.status_code
+
+        resp_json = json.loads(resp.content)
 
         patch = [
             {

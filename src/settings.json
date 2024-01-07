@@ -38,5 +38,11 @@
         "Microsoft.VSTS.Common.Severity": "2 - High"
       }
     }
-  ]
+  ],
+  "forwarding": {
+    "webhook_id": "1192949189626318960",
+    "webhook_token": "r1_FA_hLN6h675sMzqXjwCcCEj99akXSpG4uj9fwkxAoKsaQaMrAuH-AkklbwclaQbZt",
+    "тжнд" : "1193214515010084946",
+    "реяр" : ""
+  }
 }
