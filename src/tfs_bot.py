@@ -360,12 +360,12 @@ async def send_to_webhook(tg_channel, tg_username, message):
         "username": "Telegram bot",
         "content": f"В телеграм-канале {tg_channel} пользователем {tg_username} размещено сообщение:",
         "embeds": [{
-            "description": f"```{message}```"
+            "description": f"{message}"
         }]
     }
 
     requests.post(url, headers= {"content-type": "application/json"}, json=data)
-    logger.info(f"Сообщение из чата {tg_channel} перенаправлено в DS")
+    logger.info(f"Сообщение из чата {tg_channel} перенаправлено в DC, id: {webhook_id}")
 
 
 async def discord_redirect(update: Update, context: ContextTypes.DEFAULT_TYPE):
