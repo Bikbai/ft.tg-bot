@@ -4,6 +4,7 @@
   "tfs_project": "MIR",
   "team": "FCOD-M",
   "query_id": "f33d826e-59cf-4c2c-b6c5-e0a761f29dfa",
+  "telegram_token" : "",
   "projects": [
     {
       "project_code": "тжнд-л",
@@ -39,10 +40,12 @@
       }
     }
   ],
-  "forwarding": {
+  "track": {
     "webhook_id": "1192949189626318960",
     "webhook_token": "r1_FA_hLN6h675sMzqXjwCcCEj99akXSpG4uj9fwkxAoKsaQaMrAuH-AkklbwclaQbZt",
-    "тжнд" : "1193214515010084946",
-    "реяр" : ""
+    "-350867909": "1193214515010084946"
+  },
+  "users": {
+    "@Skwiz" : "admin"
   }
 }

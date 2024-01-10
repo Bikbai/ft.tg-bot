@@ -1,8 +1,11 @@
-import importlib.resources
-import json
+import re
+import string
+import sys
+from argparse import ArgumentParser
+
+from prettytable import PrettyTable
 import logging
 import collections
-import os
 import traceback
 from logging.handlers import RotatingFileHandler
 from pydoc import html
@@ -11,44 +14,33 @@ from typing import Dict
 import requests
 import telegram
 from telegram import ReplyKeyboardRemove, Update, InlineKeyboardButton, \
-    InlineKeyboardMarkup, helpers, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
+    InlineKeyboardMarkup, helpers, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo, Message
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackContext, \
     CallbackQueryHandler, ConversationHandler, DictPersistence
 
 import src.tfs_utility as tfs_utility
-
-webAppUrl = "https://bikbai.github.io/TestWebApp/"
-BUG_COMMAND = 'Создать ошибку'
-FINISH_COMMAND = 'Завершить ввод'
-ATTACH_COMMAND = 'Добавить вложений'
+from src.security import UserSecurityFilter, AdminSecurityFilter
+from src.utility import *
 
 sessionStore: Dict = {}
 sessionStore.setdefault('-1', '-1')
 
-STAGE1_HANDLER, ATTACHMENT_ENTRY, WI_NUMBER_ENTRY = range(3)
-
 # Enable logging
 
-pdata = f'{os.environ["programdata"]}/tfs_bot'
-
 # проверяем рабочий каталог
-if not os.path.exists(pdata):
-    os.mkdir(pdata)
-# копируем стандартный конфиг
-# да, если пустой файл - будет ошибка, извинити
-if not os.path.exists(f"{pdata}/settings.json"):
-    with open(f"{pdata}/settings.json", "w") as file:
-        file.write(importlib.resources.open_text(__package__, 'settings.json', encoding="CP1251").read())
+if not os.path.exists(PROGRAM_DATA_PATH):
+    os.mkdir(PROGRAM_DATA_PATH)
 
 # проверяем каталог с логами
-if not os.path.exists(f'{pdata}/logs'):
-    os.mkdir(f"{pdata}/logs")
+if not os.path.exists(f'{PROGRAM_DATA_PATH}/logs'):
+    os.mkdir(f"{PROGRAM_DATA_PATH}/logs")
+
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(module)s - %(funcName)20s %(message)s",
     level=logging.INFO,
-    handlers=[RotatingFileHandler(f'{pdata}/logs/bot_log.log', maxBytes=100000, backupCount=10)],
+    handlers=[RotatingFileHandler(f'{PROGRAM_DATA_PATH}/logs/bot_log.log', encoding='utf-8', maxBytes=100000, backupCount=10)],
 )
 
 # set higher logging level for httpx to avoid all GET and POST requests being logged
@@ -56,12 +48,28 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-# Грузим настройки
-
-with open(f"{pdata}/settings.json", "r") as file:
-    settings = json.load(file)
+settings = load_config(logger)
 
 tfs = tfs_utility.TfsManipulator(settings)
+
+parser = ArgumentParser()
+parser.add_argument("-tt", help="Токен телеграм-бота", required=True, metavar="BOT:TOKEN", dest="telegram_token")
+
+args = parser.parse_args()
+
+if settings.get('telegram_token', '') == '':
+    logger.info('В настройках не сохранён токен бота, сохраняю')
+    settings['telegram_token'] = args.telegram_token
+    save_config(settings)
+
+# хранилище последнего сообщения в разрезе chat_id. Храним, чтобы чистить клавиатуру сообщения
+lastmessage = {}
+
+
+async def clear_keyboards(chat_id):
+    if lastmessage.get(chat_id, "") != "":
+        message: Message = lastmessage.pop(chat_id)
+        await message.edit_reply_markup(None)
 
 
 def build_cancel_keyboard():
@@ -69,25 +77,25 @@ def build_cancel_keyboard():
     return ReplyKeyboardMarkup(keyboard=[[btnCancel]], resize_keyboard=True)
 
 
-def must_react(message: str):
-    kwrds = {'ошибка', 'ошибку', 'ошибки', 'проблема', 'проблемы', 'проблему', 'дефект'}
-    sp = message.lower().split()
-    r = kwrds.intersection(sp)
-    if len(r) > 0:
-        return True
-    return False
+def build_help_keyboard(context: CallbackContext):
+    btn1 = InlineKeyboardButton(text=f"Создать ошибку",
+                                url=helpers.create_deep_linked_url(context.bot.username, BUG_COMMAND))
+    btn2 = InlineKeyboardButton(text="Список ошибок", callback_data="query_wi")
+    btn3 = InlineKeyboardButton(text="Помощь", callback_data="help_btn")
+    return InlineKeyboardMarkup(inline_keyboard=[[btn1, btn2, btn3]])
 
 
 async def query_wi_callback(update: Update, context: CallbackContext):
     query = update.callback_query
-
     reply_str = tfs.query_wi()
     await query.answer()
+    await update.effective_message.edit_reply_markup(None)
     await update.callback_query.message.reply_markdown(text=reply_str)
-    return
+    return ConversationHandler.END
 
 
 async def show_help_callback(update: Update, context: CallbackContext):
+    await clear_keyboards(update.effective_chat.id)
     query = update.callback_query
     reply_str = 'Доступны функции:\n' \
                 '*Создать ошибку*\n' \
@@ -95,22 +103,21 @@ async def show_help_callback(update: Update, context: CallbackContext):
                 '*Список ошибок*\n' \
                 '- Формирует список открытых ошибок, внесённых ранее.\n' \
                 '*Помощь*\n' \
-                '- Выдаёт данное сообщение.\n'
+                '- Выдаёт данное сообщение.\n ' \
+                'Также доступны команды /help и /list'
     await query.answer()
     await update.callback_query.message.reply_markdown(text=reply_str)
-    return
+    return ConversationHandler.END
 
 
 async def std_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # кнопка перемещает в приватный режим -> Web App только в привате
-    btn1 = InlineKeyboardButton(text=f"{BUG_COMMAND}", url=helpers.create_deep_linked_url(context.bot.username, BUG_COMMAND))
-    btn2 = InlineKeyboardButton(text="Список ошибок", callback_data="query_wi")
-    btn3 = InlineKeyboardButton(text="Помощь", callback_data="help_btn")
-    button_markup = InlineKeyboardMarkup(inline_keyboard=[[btn1, btn2, btn3]])
-    await update.message.reply_markdown(
-        text="Бот среагировал на ключевое слово, можно зарегистрировать ошибку",
-        reply_markup=button_markup)
-    return
+    await clear_keyboards(update.effective_chat.id)
+    msg = await update.message.reply_markdown(
+        text="Здрасти, я бот. Доступные возможности:",
+        reply_markup=build_help_keyboard(context))
+    lastmessage[update.effective_chat.id] = msg
+    return HELP_STAGE
 
 
 async def prompt_attach(update: Update):
@@ -167,6 +174,10 @@ async def web_app_data_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # Define a `/bug` command handler.
 async def bug_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.effective_chat.type != "private":
+        await std_reply(update, context)
+        return HELP_STAGE
+
     logger.info(f"Получен запрос от {update.effective_user.name}, chat_id = {update.message.chat_id}")
 
     text = 'Команда для занесения новой ошибки или добавления к существующей вложения.\n' \
@@ -186,6 +197,7 @@ async def bug_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def list_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info(f"Получен запрос от {update.effective_user.name}, chat_id = {update.message.chat_id}")
+    await clear_keyboards(update.effective_chat.id)
     try:
         reply_text = tfs.query_wi()
     except Exception as err:
@@ -236,10 +248,6 @@ async def attachment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ConversationHandler.END
 
 
-
-
-
-
 async def cancel_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # чистим сессию за собой
     logger.info(f"Завершение сессии: {update.effective_user.name}, chat_id = {update.message.chat_id}")
@@ -260,8 +268,6 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def test_deeplink_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     bot = update.get_bot()
     uri = helpers.create_deep_linked_url(bot_username=bot.username, payload="43206")
-
-    from prettytable import PrettyTable
 
     table = PrettyTable()
     table.field_names = ['Item', 'Price']
@@ -293,7 +299,7 @@ async def wi_number_entry_handler(update: Update, context: ContextTypes.DEFAULT_
         return WI_NUMBER_ENTRY
 
     try:
-       exists = tfs.check_wi_exists(workitemId)
+        exists = tfs.check_wi_exists(workitemId)
     except Exception:
         reply_text = f'К сожалению, запрос выполнить невозможно \n' \
                      f'```{traceback.format_exc()[0:4000]}```'
@@ -337,13 +343,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
-async def send_to_webhook(tg_channel, tg_username, message):
-    channels = settings["forwarding"]
+async def send_to_webhook(tg_channel: str, tg_username: str, message: str, tg_name: str):
+    channels = settings["track"]
     if tg_channel not in channels:
-        logger.info(f"Проигнорировано сообщение из чата {tg_channel}")
+        logger.info(f"Проигнорировано сообщение из чата {tg_channel} ({tg_name})")
         return
 
-    if channels[tg_channel] != "":
+    if channels.get(tg_channel, "") != "":
         thread = f"?thread_id={channels[tg_channel]}"
     else:
         thread = ""
@@ -357,23 +363,87 @@ async def send_to_webhook(tg_channel, tg_username, message):
     url = f'https://discord.com/api/webhooks/{webhook_id}/{token}{thread}'
 
     data = {
-        "username": "Telegram bot",
-        "content": f"В телеграм-канале {tg_channel} пользователем {tg_username} размещено сообщение:",
-        "embeds": [{
-            "description": f"{message}"
-        }]
+        "username": tg_username,
+        "content": message
     }
 
-    requests.post(url, headers= {"content-type": "application/json"}, json=data)
-    logger.info(f"Сообщение из чата {tg_channel} перенаправлено в DC, id: {webhook_id}")
+    requests.post(url, headers={"content-type": "application/json"}, json=data)
+    logger.info(f"Сообщение из телеграм-канала {tg_name} перенаправлено в DC, id: {webhook_id}")
 
 
 async def discord_redirect(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_message.reply_to_message is not None:
+        msg = f'> {update.effective_message.reply_to_message.text}\n\n {update.effective_message.text}'
+    else:
+        msg = f'{update.effective_message.text}'
+
     await send_to_webhook(
-        update.message.chat.title,
-        f"{update.effective_user.full_name}({update.effective_user.name})",
-        update.message.text
+        tg_channel=str(update.effective_chat.id),
+        tg_username=f"{update.effective_user.full_name}({update.effective_user.name})",
+        message=msg,
+        tg_name=update.effective_chat.title
     )
+
+
+async def track_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg_channel = str(update.effective_chat.id)
+    command = []
+    if update.message.text is not None:
+        command = update.message.text.split()
+    if len(command) != 2 or not str.isnumeric(command[1]):
+        await update.message.reply_text("Формат команды /track <Числовой ид. канала в дискорде>")
+        return
+    settings["track"][tg_channel] = command[1]
+    save_config(settings)
+    await update.message.reply_text("Чат теперь успешно перенаправляется в ветку дискорда")
+
+
+async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    username = update.effective_user.name
+    if settings["users"][username] == 'user':
+        return ConversationHandler.END
+    btn1 = InlineKeyboardButton(text="Список", callback_data="admin_view")
+    btn2 = InlineKeyboardButton(text="Добавить", callback_data="admin_add")
+    button_markup = InlineKeyboardMarkup(inline_keyboard=[[btn1, btn2]])
+    await update.message.reply_markdown(
+        text="Доступные функции:",
+        reply_markup=button_markup)
+    return ADMIN_STAGE1
+
+
+async def admin_view_callback(update: Update, context: CallbackContext):
+    await update.callback_query.answer()
+    table = PrettyTable()
+    table.field_names = ['Имя', 'Админ']
+    for key, value in settings["users"].items():
+        table.add_row([key, value])
+    response = '```\n{}```'.format(table.get_string())
+    await update.effective_message.reply_markdown(response)
+    return ConversationHandler.END
+
+
+async def admin_add_callback(update: Update, context: CallbackContext):
+    await update.callback_query.answer()
+    reply_text = "Упомяните в сообщении @пользователей, которых нужно добавить в список. " \
+                 "По завершении нажмите кнопку Завершить"
+    await update.callback_query.message.reply_text(text=reply_text, reply_markup=build_cancel_keyboard())
+    return ADMIN_STAGE2
+
+
+async def admin_user_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message.text
+    user_list = re.findall(r"@\S*", message)
+    for value in user_list:
+        if value in settings['users']:
+            continue
+        settings['users'][value] = 'user'
+        save_config(settings)
+        await update.effective_chat.send_message(text=f'Пользователь {value} успешно добавлен в список.')
+
+    reply_text = "Упомяните в сообщении @пользователей, которых нужно добавить в список. " \
+                 "По завершении нажмите кнопку Завершить"
+    await update.effective_chat.send_message(text=reply_text, reply_markup=build_cancel_keyboard())
+    return ADMIN_STAGE2
 
 
 def main() -> None:
@@ -381,16 +451,34 @@ def main() -> None:
     react_regex = 'ошибк[а|у|и]|проблем[а|у|и]|дефект'
 
     persistence = DictPersistence(update_interval=1)  # (1)
+    userFilter = UserSecurityFilter(settings)
+    adminFilter = AdminSecurityFilter(settings)
+
+    from warnings import filterwarnings
+    from telegram.warnings import PTBUserWarning
+    filterwarnings(action="ignore", message=r".*CallbackQueryHandler", category=PTBUserWarning)
 
     # Create the Application and pass it your bot's token.
-    application = Application.builder()\
-        .token("6925490738:AAFn0ofUoo5tCSw4-xpLAF8y7s6NwOaSOyQ") \
-        .persistence(persistence)\
+    application = Application.builder() \
+        .token(settings['telegram_token']) \
+        .persistence(persistence) \
         .build()
 
-    # application.add_handler(CommandHandler("start", start_cmd_handler))
-    # application.add_handler(CommandHandler("bug", bug_cmd_handler))
-    application.add_handler(CommandHandler("list", list_cmd_handler))
+    help_conversation = ConversationHandler(
+        entry_points=[CommandHandler(command="help",
+                                     callback=std_reply,
+                                     filters=userFilter)],
+        states={
+            HELP_STAGE: [
+                CommandHandler(command="help", callback=std_reply, filters=userFilter),
+                # кнопка "Список"
+                CallbackQueryHandler(callback=query_wi_callback, pattern='query_wi'),
+                # кнопка "добавить"
+                CallbackQueryHandler(callback=show_help_callback, pattern='help_btn'),
+            ]
+        },
+        fallbacks=[CommandHandler("cancel", cancel_input_handler)],
+    )
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("bug", bug_cmd_handler)],
@@ -406,25 +494,62 @@ def main() -> None:
             ],
             ATTACHMENT_ENTRY: [
                 MessageHandler(filters.Document.ALL | filters.PHOTO, attachment_handler),
+                MessageHandler(filters.Regex(f"^{FINISH_COMMAND}$"), cancel_input_handler)
+            ],
+            HELP_STAGE: [
+                CommandHandler(command="help", callback=std_reply, filters=userFilter),
+                # кнопка "Список"
+                CallbackQueryHandler(callback=query_wi_callback, pattern='query_wi'),
+                # кнопка "добавить"
+                CallbackQueryHandler(callback=show_help_callback, pattern='help_btn'),
+            ]
+        },
+        fallbacks=[CommandHandler("cancel", cancel_input_handler)],
+    )
+
+    admin_handler = ConversationHandler(
+        entry_points=[CommandHandler(command="admin",
+                                     callback=admin_command_handler,
+                                     filters=adminFilter)],
+        states={
+            ADMIN_STAGE1: [
+                # кнопка "посмотреть"
+                CallbackQueryHandler(callback=admin_view_callback, pattern='admin_view'),
+                # кнопка "добавить"
+                CallbackQueryHandler(callback=admin_add_callback, pattern='admin_add'),
+            ],
+            ADMIN_STAGE2: [
+                MessageHandler(~filters.Regex(f"^{FINISH_COMMAND}$"), admin_user_input_handler),
                 MessageHandler(filters.Regex(f"^{FINISH_COMMAND}$"), cancel_input_handler)]
         },
         fallbacks=[CommandHandler("cancel", cancel_input_handler)],
     )
 
     application.add_handler(conv_handler)
+    application.add_handler(admin_handler)
+    application.add_handler(help_conversation)
 
-    application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, web_app_data_handler))
-    application.add_handler(CallbackQueryHandler(callback=query_wi_callback, pattern='query_wi'))
-    application.add_handler(CallbackQueryHandler(callback=show_help_callback, pattern='help_btn'))
-    application.add_handler(MessageHandler(filters=filters.Regex(react_regex) & ~filters.COMMAND, callback=std_reply))
-    application.add_handler(MessageHandler(~filters.ChatType.PRIVATE & ~filters.COMMAND, callback=discord_redirect))
-    application.add_handler(CommandHandler(command="start", callback=start_handler))
-    application.add_handler(CommandHandler(command="test", callback=test_deeplink_handler))
+    application.add_handler(CommandHandler(
+        command="list",
+        callback=list_cmd_handler,
+        filters=userFilter))
 
+    application.add_handler(CommandHandler(
+        command="help",
+        callback=show_help_callback,
+        filters=userFilter))
+
+    application.add_handler(CommandHandler(
+        command="start",
+        callback=start_handler,
+        filters=userFilter & filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler(
+        command="track",
+        callback=track_handler,
+        filters=adminFilter & ~filters.ChatType.PRIVATE))
+
+    application.add_handler(MessageHandler(~filters.ChatType.PRIVATE, callback=discord_redirect))
     # Run the bot until the user presses Ctrl-C
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
     application.add_error_handler(error_handler)
-
-    print("Started.")
-
