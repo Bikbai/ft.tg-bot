@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="Encoding">
-    <file url="file://$PROJECT_DIR$/src/settings.json" charset="windows-1251" />
-    <file url="file://$PROJECT_DIR$/src/settings.json" charset="windows-1251" />
-    <file url="file://$PROJECT_DIR$/src/settings.json" charset="windows-1251" />
+    <file url="file://$PROJECT_DIR$/src/src/settings.json" charset="windows-1251" />
+    <file url="file://$PROJECT_DIR$/src/src/settings.json" charset="windows-1251" />
+    <file url="file://$PROJECT_DIR$/tfs_bot/settings.json" charset="windows-1251" />
   </component>
 </project>

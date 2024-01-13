@@ -47,10 +47,10 @@ print(prepare_patch(s))
 
 def a():
     j = json.dumps(settings, indent=4, ensure_ascii=False)
-    with open("../src/settings.json", "w") as outfile:
+    with open("../tfs_bot/settings.json", "w") as outfile:
         outfile.write(j)
 
-    with open('../src/settings.json', 'r') as openfile:
+    with open('../tfs_bot/settings.json', 'r') as openfile:
         # Reading from json file
         json_object = json.load(openfile)
 

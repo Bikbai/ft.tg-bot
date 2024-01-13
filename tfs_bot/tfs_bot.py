@@ -2,26 +2,25 @@ import re
 import string
 import sys
 from argparse import ArgumentParser
+from pydoc import html
 
 from prettytable import PrettyTable
 import logging
 import collections
 import traceback
 from logging.handlers import RotatingFileHandler
-from pydoc import html
 from typing import Dict
 
 import requests
-import telegram
 from telegram import ReplyKeyboardRemove, Update, InlineKeyboardButton, \
     InlineKeyboardMarkup, helpers, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo, Message
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackContext, \
     CallbackQueryHandler, ConversationHandler, DictPersistence
 
-import src.tfs_utility as tfs_utility
-from src.security import UserSecurityFilter, AdminSecurityFilter
-from src.utility import *
+import tfs_utility as tfs_utility
+from security import UserSecurityFilter, AdminSecurityFilter
+from utility import *
 
 sessionStore: Dict = {}
 sessionStore.setdefault('-1', '-1')
@@ -553,3 +552,5 @@ def main() -> None:
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
     application.add_error_handler(error_handler)
+
+
